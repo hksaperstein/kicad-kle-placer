@@ -57,15 +57,23 @@ class KeyAutoPlaceDialog(wx.Dialog):
         diode_annotation_format = wx.TextCtrl(self, value='D{}')
         diode_format_box.Add(diode_annotation_format, 1, wx.EXPAND|wx.ALL, 5)
 
-        # Led format
+        # LED format
         led_format_box = wx.BoxSizer(wx.HORIZONTAL)
 
-        ledAnnotationLabel = wx.StaticText(self, -1, "Led Annotation format string:")
+        ledAnnotationLabel = wx.StaticText(self, -1, "LED Annotation format string:")
         led_format_box.Add(ledAnnotationLabel, 1, wx.LEFT|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, 5)
 
         led_annotation_format = wx.TextCtrl(self, value='LED{}')
         led_format_box.Add(led_annotation_format, 1, wx.EXPAND|wx.ALL, 5)
 
+        # LED Decoupling Capacitor format
+        capacitor_format_box = wx.BoxSizer(wx.HORIZONTAL)
+
+        capacitorAnnotationLabel = wx.StaticText(self, -1, "LED Decoupling Capacitor Annotation format string:")
+        capacitor_format_box.Add(capacitorAnnotationLabel, 1, wx.LEFT|wx.RIGHT|wx.ALIGN_CENTER_VERTICAL, 5)
+
+        capacitor_annotation_format = wx.TextCtrl(self, value='C{}')
+        capacitor_format_box.Add(capacitor_annotation_format, 1, wx.EXPAND|wx.ALL, 5)
         # Diode bool
         move_diodes_box = wx.BoxSizer(wx.HORIZONTAL)
 
@@ -95,6 +103,7 @@ class KeyAutoPlaceDialog(wx.Dialog):
         box.Add(stab_format_box, 0, wx.EXPAND|wx.ALL, 5)
         box.Add(diode_format_box, 0, wx.EXPAND|wx.ALL, 5)
         box.Add(led_format_box, 0, wx.EXPAND|wx.ALL, 5)
+        box.Add(capacitor_format_box, 0, wx.EXPAND|wx.ALL, 5)
         box.Add(move_diodes_box, 0, wx.EXPAND|wx.ALL, 5)
         box.Add(relative_diode_box, 0, wx.EXPAND|wx.ALL, 5)
         box.Add(specific_ref_box, 0, wx.EXPAND|wx.ALL, 5)
@@ -108,6 +117,7 @@ class KeyAutoPlaceDialog(wx.Dialog):
         self.stabilizer_annotation_format = stabilizer_annotation_format
         self.diode_annotation_format = diode_annotation_format
         self.led_annotation_format = led_annotation_format
+        self.capacitor_annotation_format = capacitor_annotation_format
         self.move_diodes_bool = move_diodes_bool
         self.relative_diode_bool = relative_diode_bool
         self.specific_ref_mode = specific_ref_mode
@@ -127,6 +137,9 @@ class KeyAutoPlaceDialog(wx.Dialog):
     def get_led_annotation_format(self):
         return self.led_annotation_format.GetValue()
 
+    def get_capacitor_annotation_format(self):
+        return self.capacitor_annotation_format.GetValue()
+    
     def get_move_diodes_bool(self):
         return self.move_diodes_bool.GetValue()
 
@@ -177,20 +190,21 @@ class KeyPlacer(BoardModifier):
         self.current_diode = 1
         self.reference_coordinate = pcbnew.wxPoint(pcbnew.FromMM(25), pcbnew.FromMM(25))
 
-    def get_current_key(self, key_format, stabilizer_format, led_format):
+    def get_current_key(self, key_format, stabilizer_format, led_format, cap_format):
         key = self.get_footprint(key_format.format(self.current_key))
 
         # in case of perigoso/keyswitch-kicad-library, stabilizer holes are not part of of switch footprint and needs to be handled
         # separately, check if there is stabilizer with id matching current key and return it
         # stabilizer will be None if not found
+        # LED will be None if not found
+        # Decoupling Capacitor will be None if not found
         stabilizer = self.get_footprint(stabilizer_format.format(self.current_key), required=False)
-        led = None
-        if led_format:
-            led = self.get_footprint(led_format.format(self.current_key), required=False)
+        led = self.get_footprint(led_format.format(self.current_key), required=False)
+        cap = self.get_footprint(cap_format.format(self.current_key), required=False)
 
         self.current_key += 1
 
-        return key, stabilizer, led
+        return key, stabilizer, led, cap
 
     # def get_current_diode(self, diode_format):
     #     diode = self.get_footprint(diode_format.format(self.current_diode))
@@ -297,7 +311,7 @@ class KeyPlacer(BoardModifier):
         # Sort keys based on the centers of each key (by default it sorts with the top left corner)
         sort_keys_kle_placer(self.layout.keys)
 
-    def Run(self, key_format, stabilizer_format, diode_format, led_format, move_diodes, relative_diode_mode, rotation_mode):
+    def Run(self, key_format, stabilizer_format, diode_format, led_format, cap_format, move_diodes, relative_diode_mode, rotation_mode):
 
         ### First, check all the multilayouts and squish all the same multilayouts into the same position on top of one another. ###
 
@@ -437,7 +451,7 @@ class KeyPlacer(BoardModifier):
 
             # Get the diode, switch, stabilizer, and led footprints
             diode_footprint = self.get_footprint(diode_format.format(self.current_key), required=False) or None
-            switch_footprint, stabilizer, led_footprint = self.get_current_key(key_format, stabilizer_format, led_format)
+            switch_footprint, stabilizer, led_footprint, cap_footprint = self.get_current_key(key_format, stabilizer_format, led_format, cap_format)
 
             # Extra individual switch rotations i.e. extra rotation compared to the first switch's rotation e.g. for south/north facing switches
             extra_switch_rotation = 0
@@ -549,7 +563,7 @@ class KLEPlacerAction(pcbnew.ActionPlugin):
 
                 self.logger.info("User layout: {}".format(self.layout))
                 placer = KeyPlacer(self.logger, self.board, self.layout)
-                placer.Run(dlg.get_key_annotation_format(), dlg.get_stabilizer_annotation_format(), dlg.get_diode_annotation_format(), dlg.get_led_annotation_format(), dlg.get_move_diodes_bool(), dlg.get_relative_diode_bool(), dlg.get_specific_ref_mode_bool())
+                placer.Run(dlg.get_key_annotation_format(), dlg.get_stabilizer_annotation_format(), dlg.get_diode_annotation_format(), dlg.get_led_annotation_format(), dlg.get_capacitor_annotation_format(), dlg.get_move_diodes_bool(), dlg.get_relative_diode_bool(), dlg.get_specific_ref_mode_bool())
 
         dlg.Destroy()
         logging.shutdown()
