@@ -13,7 +13,6 @@ To use this plugin with **KiCAD 6**, you'll have to use the legacy `6.0` branch 
 
 **For installation instructions for KiCAD 7+, scroll down or [click me](#installation-kicad-7)**
 
-
 # Usage
 **Initial note: There should be the SAME number of footprints/symbols (in your KiCAD project) as there are keys (in the KLE).**
 
