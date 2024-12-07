@@ -1,4 +1,6 @@
 import pcbnew
+from pcbnew import BOARD, FOOTPRINT, VECTOR2I, wxPoint, EDA_ANGLE
+
 import wx
 import os
 import re
@@ -6,9 +8,10 @@ import sys
 import json
 import logging
 from copy import deepcopy
-from .deserialize import deserialize
-# from .serialize import *
-from .kle_placer_utils import Keyboard, read_file, sort_keys_kle_placer, min_x_y, check_multilayout_keys
+from math import sin, cos, radians, sqrt, atan, degrees
+
+from .serial import deserialize, Keyboard
+from .util import read_file, sort_keys_kle_placer, min_x_y, check_multilayout_keys
 
 class KeyAutoPlaceDialog(wx.Dialog):
     def __init__(self, parent, title, caption):
@@ -134,9 +137,9 @@ class KeyAutoPlaceDialog(wx.Dialog):
         return self.specific_ref_mode.GetValue()
 
 class BoardModifier():
-    def __init__(self, logger, board):
+    def __init__(self, logger, board: BOARD):
         self.logger = logger
-        self.board = board
+        self.board: BOARD = board
 
     def mm_to_nm(self, v):
         return int(v * 1000000)
@@ -144,29 +147,29 @@ class BoardModifier():
     def nm_to_mm(self, v):
         return v / 1000000.0
 
-    def get_footprint(self, reference, required=True):
+    def get_footprint(self, reference, required=True) -> FOOTPRINT:
         self.logger.info("Searching for {} footprint".format(reference))
         footprint = self.board.FindFootprintByReference(reference)
-        if footprint == None and required:
+        if footprint is None and required:
             self.logger.error("Footprint not found")
             raise Exception("Cannot find footprint {}".format(reference))
         return footprint
 
-    def set_position(self, footprint, position):
+    def set_position(self, footprint: FOOTPRINT, position: wxPoint):
         self.logger.info("Setting {} footprint position: {}".format(footprint.GetReference(), position))
-        footprint.SetPosition(position)
+        footprint.SetPosition(VECTOR2I(int(position.x), int(position.y)))
 
     def set_relative_position_mm(self, footprint, referencePoint, direction):
         position = pcbnew.wxPoint(referencePoint.x + pcbnew.FromMM(direction[0]), referencePoint.y + pcbnew.FromMM(direction[1]))
         self.set_position(footprint, position)
 
-    def rotate(self, footprint, rotationReference, angle):
+    def rotate(self, footprint: FOOTPRINT, rotationReference, angle):
         self.logger.info("Rotating {} footprint: rotationReference: {}, rotationAngle: {}".format(footprint.GetReference(), rotationReference, angle))
-        footprint.Rotate(rotationReference, angle * -10)
+        footprint.Rotate(VECTOR2I(int(rotationReference.x), int(rotationReference.y)), EDA_ANGLE(angle*-1, pcbnew.DEGREES_T))
 
 
 class KeyPlacer(BoardModifier):
-    def __init__(self, logger, board, layout):
+    def __init__(self, logger, board: BOARD, layout):
         super().__init__(logger, board)
         self.layout: Keyboard = layout
         self.key_distance = pcbnew.FromMM(19.05)
@@ -196,6 +199,7 @@ class KeyPlacer(BoardModifier):
 
     def squish_kbd_multilayout(self):
         kbd = deepcopy(self.layout)
+        self.logger.info(kbd.keys)
         ml_keys = check_multilayout_keys(kbd)
 
         # This list will replace kbd.keys later
@@ -315,16 +319,68 @@ class KeyPlacer(BoardModifier):
             def check(key):
                 return int(key.labels[4])
             self.layout.keys.sort(key=lambda x:check(x))
-        first_key_pos = pcbnew.wxPoint((first_key.GetPosition().x) - ((self.key_distance * self.layout.keys[0].x) + (self.key_distance * self.layout.keys[0].width // 2)),
+            # if first key is already rotated as it should be upon running the code, use maths to get the reference point, accounting for rotation:
+            if self.layout.keys[0].rotation_angle != 0 and (first_key.GetOrientationDegrees() + self.layout.keys[0].rotation_angle) in [0, 90, 180, -90]:
+                r = self.layout.keys[0].rotation_angle
+                w = self.layout.keys[0].width
+                h = self.layout.keys[0].height
+                rx = self.layout.keys[0].rotation_x
+                ry = self.layout.keys[0].rotation_y
+
+                u = self.key_distance
+                pos = first_key.GetPosition()
+
+                lx = w/2
+                ly = h/2
+                l = sqrt( pow(lx, 2) + pow(ly, 2) ) * u
+                theta = degrees(atan(ly/lx))
+                alpha = 180 - ( 90 + r + theta )
+                self.logger.info("l {}".format(l))
+                self.logger.info("theta {}".format(theta))
+                self.logger.info("alpha {}".format(alpha))
+
+                dif_x = sin(radians(alpha)) * l
+                dif_y = cos(radians(alpha)) * l
+                self.logger.info("dif_x {}".format(dif_x))
+                self.logger.info("dif_y {}".format(dif_y))
+
+
+                x = pos.x
+                y = pos.y
+                self.logger.info("x {}".format(x))
+                self.logger.info("y {}".format(y))
+
+                xc = x - dif_x - rx * u
+                yc = y - dif_y - ry * u
+                self.logger.info("xc {}".format(xc))
+                self.logger.info("yc {}".format(yc))
+
+                top_left = pcbnew.wxPoint(xc , yc)
+                first_key_pos = top_left
+
+                #self.set_position(first_key,  pcbnew.wxPoint(xc, yc))
+            else:
+                first_key_pos = pcbnew.wxPoint((first_key.GetPosition().x) - ((self.key_distance * self.layout.keys[0].x) + (self.key_distance * self.layout.keys[0].width // 2)),
+                        (first_key.GetPosition().y) - ((self.key_distance * self.layout.keys[0].y) + (self.key_distance * self.layout.keys[0].height // 2)))
+        else:
+            first_key_pos = pcbnew.wxPoint((first_key.GetPosition().x) - ((self.key_distance * self.layout.keys[0].x) + (self.key_distance * self.layout.keys[0].width // 2)),
                     (first_key.GetPosition().y) - ((self.key_distance * self.layout.keys[0].y) + (self.key_distance * self.layout.keys[0].height // 2)))
 
+        
+        self.logger.info("first_key_pos {}".format(first_key_pos))
         first_key_rotation = first_key.GetOrientationDegrees()
 
         # Set the origin/reference as the first key
         self.reference_coordinate = first_key_pos
 
         # Set the default rotation to that of the first key's
-        default_key_rotation = first_key_rotation
+        first_key_already_rotated = False
+        if first_key_rotation != 0 and (first_key_rotation + self.layout.keys[0].rotation_angle) in [0, 90, 180, -90]:
+            default_key_rotation = first_key_rotation + self.layout.keys[0].rotation_angle
+            first_key_already_rotated = True
+        else:
+            default_key_rotation = first_key_rotation
+        self.logger.info("default_key_rotation {}".format(default_key_rotation))
 
         # Get information about the first diode
         first_diode = self.get_footprint(diode_format.format(1), required=False) or None
@@ -339,10 +395,34 @@ class KeyPlacer(BoardModifier):
 
 
         if relative_diode_mode:
-            diode_offset_x = self.nm_to_mm(first_diode.GetPosition().x - first_key.GetPosition().x)
-            diode_offset_y = self.nm_to_mm(first_diode.GetPosition().y - first_key.GetPosition().y)
 
+            # if first key is already rotated as it should be upon running the code, use maths to get the proper diode offset, accounting for rotation:
+            if rotation_mode and self.layout.keys[0].rotation_angle != 0 and (first_key.GetOrientationDegrees() + self.layout.keys[0].rotation_angle) in [0, 90, 180, -90]:
+                mx = abs(first_diode.GetPosition().x - first_key.GetPosition().x)
+                my = abs(first_diode.GetPosition().y - first_key.GetPosition().y)
+                ml = sqrt(pow(mx, 2) + pow(my, 2))
+                beta = degrees(atan(my/mx))
+                z = 90 - beta - r  # r from earlier
+                self.logger.info("mx {}".format(mx))
+                self.logger.info("my {}".format(my))
+                self.logger.info("ml {}".format(ml))
+                self.logger.info("beta {}".format(beta))
+                self.logger.info("z {}".format(z))
+
+                ox = sin(radians(z)) * ml
+                oy = cos(radians(z)) * ml
+                self.logger.info("ox {}".format(ox))
+                self.logger.info("oy {}".format(oy))
+
+                diode_offset_x = self.nm_to_mm(ox)
+                diode_offset_y = self.nm_to_mm(oy)
+            else:
+                diode_offset_x = self.nm_to_mm(first_diode.GetPosition().x - first_key.GetPosition().x)
+                diode_offset_y = self.nm_to_mm(first_diode.GetPosition().y - first_key.GetPosition().y)
+        
         first_diode_rotation = first_diode.GetOrientationDegrees()
+        if first_key_already_rotated:
+            first_diode_rotation += self.layout.keys[0].rotation_angle
 
         # Set the default diode rotation to that of the first diode's
         default_diode_rotation = first_diode_rotation
@@ -351,6 +431,8 @@ class KeyPlacer(BoardModifier):
         for key in self.layout.keys:
             if rotation_mode:
                 current_ref = int(key.labels[4]) # Already checked for violations earlier
+                # if current_ref == 1:
+                #     continue
                 self.current_key = current_ref
 
             # Get the diode, switch, stabilizer, and led footprints
@@ -412,6 +494,7 @@ class KeyPlacer(BoardModifier):
             # For angled keys (should only apply when rotation mode is enabled)
             if angle != 0:
                 rotation_reference = pcbnew.wxPoint((self.key_distance * key.rotation_x), (self.key_distance * key.rotation_y)) + self.reference_coordinate
+                self.logger.info("rotation_reference {}".format(rotation_reference))
                 self.rotate(switch_footprint, rotation_reference, angle)
 
                 if diode_footprint and move_diodes:
