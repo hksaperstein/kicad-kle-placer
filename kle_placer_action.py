@@ -458,7 +458,7 @@ class KeyPlacer(BoardModifier):
         # Set the default diode rotation to that of the first diode's
         default_diode_rotation = first_diode_rotation
         default_led_rotation = first_led_rotation
-        default_cap_rotation = first_diode_rotation
+        default_cap_rotation = first_cap_rotation
         # Start placement of keys
         for key in self.layout.keys:
             if rotation_mode:
